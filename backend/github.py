@@ -51,7 +51,10 @@ def validate_github_url(value: str) -> GitHubRepository:
 
 def _force_remove_readonly(func, path, exc_info) -> None:  # noqa: ANN001
     """Error handler for shutil.rmtree that clears read-only bits on Windows."""
-    os.chmod(path, stat.S_IWRITE)
+    try:
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD | stat.S_IRGRP | stat.S_IROTH)
+    except OSError:
+        pass
     func(path)
 
 
@@ -98,7 +101,8 @@ def clone_repository(url: str, repository_id: str) -> tuple[Path, str | None]:
             capture_output=True, text=True, timeout=10, env=env, check=False,
         )
         branch = branch_result.stdout.strip() or None
-        staging.replace(destination)
+        _remove_generated_path(destination, base)
+        shutil.move(str(staging), str(destination))
         return destination, branch
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(f"Repository download exceeded {settings.clone_timeout_seconds} seconds.") from exc

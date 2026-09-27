@@ -8,6 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 
 from backend.config import ROOT, settings
+from backend.database import check_health
 from backend.github import RepositoryInputError
 from backend.service import OnboardingService
 
@@ -73,7 +74,7 @@ def make_handler(service: OnboardingService) -> type[BaseHTTPRequestHandler]:
                 self._send(200, path.read_bytes(), content_type)
                 return
             if route == "/api/health" and method == "GET":
-                self._send(200, {"status": "ok", "llm_enabled": service.llm.enabled})
+                self._send(200, {"status": "ok", "llm_enabled": service.llm.enabled, "db_healthy": check_health()})
                 return
             if route == "/api/repositories/validate" and method == "POST":
                 body = self._body()
@@ -135,6 +136,15 @@ def make_handler(service: OnboardingService) -> type[BaseHTTPRequestHandler]:
             if len(parts) == 5 and parts[3] == "conversations" and method == "GET":
                 self._send(200, service.conversation(repository_id, parts[4]))
                 return
+            if len(parts) == 5 and parts[3] == "guide" and parts[4] == "download" and method == "GET":
+                fmt = query.get("format", "markdown").lower()
+                if fmt == "pdf":
+                    pdf_bytes = service.guide_pdf(repository_id)
+                    self._send(200, pdf_bytes, "application/pdf")
+                else:
+                    md = service.guide_markdown(repository_id)
+                    self._send(200, md.encode("utf-8"), "text/markdown; charset=utf-8")
+                return
             self._send(404, {"error": "Route not found."})
 
         def _handle(self, method: str) -> None:
@@ -151,8 +161,15 @@ def make_handler(service: OnboardingService) -> type[BaseHTTPRequestHandler]:
             except BrokenPipeError:
                 return
             except Exception:
-                LOGGER.exception("request failed method=%s path=%s", method, self.path)
-                self._send(500, {"error": "The request could not be completed."})
+                LOGGER.exception(
+                    "request failed method=%s path=%s",
+                    method,
+                    self.path,
+                )
+                self._send(
+                    500,
+                    {"error": "The request could not be completed."},
+                )
 
         def do_GET(self) -> None:
             self._handle("GET")

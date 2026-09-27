@@ -106,7 +106,7 @@ async function loadRepository() {
       : "Mapping your repository";
     $("#jobDetail").textContent = state.repository.status === "queued"
       ? "The background worker will start shortly."
-      : "Scanning files, symbols, API routes, and local imports.";
+      : "Scanning files, symbols, APIs, generating embeddings and onboarding guide…";
     $("#errorBanner").classList.toggle(
       "hidden",
       !(state.repository.status === "failed" && state.repository.error),
@@ -187,7 +187,7 @@ async function renderOverview(root) {
     <div class="stats-grid">
       ${statCard("FILES MAPPED", data.counts.files, "Text files within analysis limits")}
       ${statCard("CODE SYMBOLS", data.counts.symbols, "Functions, classes and types")}
-      ${statCard("RELATIONSHIPS", data.counts.relationships, "Imports, definitions and calls")}
+      ${statCard("CHUNKS / EMBEDDINGS", (data.counts.chunks || 0) + " / " + (data.counts.embeddings || 0), "Semantic chunks indexed for RAG")}
       ${statCard("API ROUTES", data.counts.api_routes, "Route patterns found in source")}
     </div>
     <div class="overview-grid">
@@ -202,8 +202,8 @@ async function renderOverview(root) {
             ? extensions.map((item) => `<span class="tag">${escapeHtml(item)}</span>`).join("")
             : '<span class="tag neutral">Could not confirm</span>'}</div>
           <p class="empty-copy">${data.llm_enabled
-            ? "Repository chat can use the configured language model."
-            : "Chat uses evidence search until an OpenAI-compatible key is configured."}</p>
+            ? "IBM / Groq LLM is active — answers are grounded in repository evidence."
+            : "Chat uses hybrid RAG search. Configure IBM_API_KEY or GROQ_API_KEY for LLM answers."}</p>
         </section>
       </div>
       <section class="panel">
@@ -227,15 +227,41 @@ function listItems(items, emptyText, renderItem) {
 
 async function renderGuide(root) {
   const guide = await api(`/api/repositories/${state.repositoryId}/guide`);
+
+  // If we have LLM-generated Markdown, render it
+  const hasLLMGuide = guide.content_md && guide.content_md.length > 100;
+
+  if (hasLLMGuide) {
+    const downloadBar = `
+      <div class="guide-download-bar">
+        <span class="guide-generated-note">Generated ${guide.generated_at ? new Date(guide.generated_at).toLocaleString() : "recently"}</span>
+        <div class="guide-download-buttons">
+          <a class="secondary-button" href="/api/repositories/${encodeURIComponent(state.repositoryId)}/guide/download?format=markdown" download="onboarding-guide.md">↓ Markdown</a>
+          <a class="secondary-button" href="/api/repositories/${encodeURIComponent(state.repositoryId)}/guide/download?format=pdf" download="onboarding-guide.pdf">↓ PDF</a>
+        </div>
+      </div>`;
+    root.innerHTML = `${pageHeading("Onboarding guide", "AI-generated developer onboarding guide grounded in repository evidence.")}
+      ${downloadBar}
+      <div class="guide-layout">
+        <div class="guide-content guide-content-full">
+          <section class="content-card guide-section">
+            <div class="guide-md-body">${markdownLite(guide.content_md)}</div>
+          </section>
+        </div>
+      </div>`;
+    return;
+  }
+
+  // Fallback: structured static guide sections
   const sections = [
     {
       id: "overview",
       title: "Project overview",
       body: `
-        <p><strong>${escapeHtml(guide.overview.repository)}</strong></p>
-        <p>${escapeHtml(guide.overview.description || "Project purpose could not be confirmed from a README.")}</p>
-        <p>Stack: ${escapeHtml((guide.overview.technology_stack || []).join(", "))}</p>
-        <p>Detected: ${guide.overview.counts.files} files | ${guide.overview.counts.symbols} symbols | ${guide.overview.counts.api_routes} API routes</p>`,
+        <p><strong>${escapeHtml((guide.overview || {}).repository || "")}</strong></p>
+        <p>${escapeHtml((guide.overview || {}).description || "Project purpose could not be confirmed from a README.")}</p>
+        <p>Stack: ${escapeHtml(((guide.overview || {}).technology_stack || []).join(", "))}</p>
+        <p>Detected: ${((guide.overview || {}).counts || {}).files || 0} files | ${((guide.overview || {}).counts || {}).symbols || 0} symbols | ${((guide.overview || {}).counts || {}).api_routes || 0} API routes</p>`,
     },
     {
       id: "structure",
@@ -247,8 +273,8 @@ async function renderGuide(root) {
       id: "architecture",
       title: "Architecture and relationships",
       body: `
-        <p>${guide.architecture.resolved_import_edges} local import relationships were resolved from source evidence. The diagram shows those file imports.</p>
-        <pre>${escapeHtml(guide.architecture.import_graph_mermaid)}</pre>`,
+        <p>${(guide.architecture || {}).resolved_import_edges || 0} local import relationships were resolved from source evidence.</p>
+        <pre>${escapeHtml((guide.architecture || {}).import_graph_mermaid || "No import graph available.")}</pre>`,
     },
     {
       id: "entry-points",
@@ -288,6 +314,14 @@ async function renderGuide(root) {
     },
   ];
 
+  const downloadBar = `
+    <div class="guide-download-bar">
+      <div class="guide-download-buttons">
+        <a class="secondary-button" href="/api/repositories/${encodeURIComponent(state.repositoryId)}/guide/download?format=markdown" download="onboarding-guide.md">↓ Markdown</a>
+        <a class="secondary-button" href="/api/repositories/${encodeURIComponent(state.repositoryId)}/guide/download?format=pdf" download="onboarding-guide.pdf">↓ PDF</a>
+      </div>
+    </div>`;
+
   const tableOfContents = sections.map(({ id, title }) => `
     <button data-jump="${id}">${escapeHtml(title)}</button>`).join("");
   const sectionContent = sections.map(({ id, title, body }) => `
@@ -299,6 +333,7 @@ async function renderGuide(root) {
     "Onboarding guide",
     "A repository-backed introduction, limited to what the scanner could confirm.",
   )}
+    ${downloadBar}
     <div class="guide-layout">
       <nav class="content-card guide-toc">${tableOfContents}</nav>
       <div class="guide-content">${sectionContent}</div>
@@ -436,7 +471,27 @@ function markdownLite(value) {
       code.push(line);
       continue;
     }
-    if (!line.trim()) continue;
+
+    if (line.startsWith("### ")) {
+      html += `<h3>${line.slice(4)}</h3>`;
+      continue;
+    }
+    if (line.startsWith("## ")) {
+      html += `<h2>${line.slice(3)}</h2>`;
+      continue;
+    }
+    if (line.startsWith("# ")) {
+      html += `<h1>${line.slice(2)}</h1>`;
+      continue;
+    }
+    if (line.startsWith("- ") || line.startsWith("* ")) {
+      html += `<li>${line.slice(2).replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`([^`]+)`/g, "<code>$1</code>")}</li>`;
+      continue;
+    }
+    if (!line.trim()) {
+      html += "<br/>";
+      continue;
+    }
 
     const formatted = line
       .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
@@ -657,7 +712,11 @@ document.querySelectorAll(".nav-item").forEach((button) => {
 });
 
 api("/api/health")
-  .then(() => { $("#serviceStatus").textContent = "Local analysis service ready"; })
+  .then((data) => {
+    const llm = data.llm_enabled ? " · LLM active" : "";
+    const db = data.db_healthy === false ? " · DB offline" : "";
+    $("#serviceStatus").textContent = `Local analysis service ready${llm}${db}`;
+  })
   .catch(() => { $("#serviceStatus").textContent = "Local service unavailable"; });
 refreshRepositories().catch((error) => {
   $("#serviceStatus").textContent = "Local service unavailable";

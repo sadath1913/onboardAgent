@@ -1,0 +1,217 @@
+
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>OnboardAgent v0.2 — Implementation Report</title>
+<style>
+body{font-family:-apple-system,"Segoe UI",system-ui,sans-serif;font-size:14px;line-height:1.6;background:#fff;color:#1f2328;max-width:760px;margin:40px auto;padding:0 20px}
+h1{font-size:22px;border-bottom:2px solid #e5e7eb;padding-bottom:10px;margin-bottom:6px}
+h2{font-size:16px;margin:28px 0 8px;color:#1f2328;border-bottom:1px solid #e5e7eb;padding-bottom:4px}
+h3{font-size:13px;margin:14px 0 4px;color:#3b82d4}
+table{width:100%;border-collapse:collapse;font-size:12px;margin:10px 0}
+th{background:#f7f8fa;text-align:left;padding:6px 10px;border:1px solid #e5e7eb;font-weight:600}
+td{padding:5px 10px;border:1px solid #e5e7eb;vertical-align:top}
+.pass{color:#2a8a3f;font-weight:600}
+.fail{color:#b91c1c;font-weight:600}
+.warn{color:#b45309;font-weight:600}
+.tag{display:inline-block;background:#f7f8fa;border:1px solid #e5e7eb;border-radius:4px;padding:1px 7px;font-size:11px;margin:2px 2px}
+code{font-family:Consolas,monospace;font-size:11px;background:#f7f8fa;padding:1px 5px;border-radius:3px}
+pre{background:#f7f8fa;border:1px solid #e5e7eb;border-radius:6px;padding:12px;font-size:11px;overflow:auto}
+.section{background:#f7f8fa;border-left:3px solid #3b82d4;padding:10px 14px;margin:12px 0;border-radius:0 6px 6px 0}
+ul{margin:4px 0;padding-left:18px}
+li{margin:3px 0}
+.muted{color:#57606a}
+footer{border-top:1px solid #e5e7eb;margin-top:40px;padding-top:10px;text-align:center;font-size:12px;color:#57606a}
+</style>
+</head>
+<body>
+
+<h1>OnboardAgent v0.2 — Implementation Report</h1>
+<p class="muted">Upgrade: SQLite + Static Analysis + OpenAI → PostgreSQL + pgvector + RAG + IBM/Groq LLM</p>
+
+<h2>Validation Results</h2>
+<table>
+<tr><th>Check</th><th>Result</th><th>Notes</th></tr>
+<tr><td>Python compilation (<code>compileall</code>)</td><td class="pass">PASS</td><td>All backend/, tests/, alembic/ files compile without errors</td></tr>
+<tr><td>Frontend JS syntax (<code>node --check</code>)</td><td class="pass">PASS</td><td>app.js syntax validated</td></tr>
+<tr><td>Tests: test_analyzer (3 tests)</td><td class="pass">3 PASS</td><td>Symbol extraction, secret redaction, guide structure</td></tr>
+<tr><td>Tests: test_github (4 tests)</td><td class="pass">4 PASS</td><td>URL validation, normalization, rejection cases</td></tr>
+<tr><td>Tests: test_service (16 tests)</td><td class="pass">16 PASS</td><td>Analysis pipeline, parsers, chunker, guide gen, LLM fallback, chat</td></tr>
+<tr><td>Tests: test_server (2 tests)</td><td class="pass">2 PASS</td><td>Health route, validation route</td></tr>
+<tr><td>Tests: test_retrieval tokenizer/excerpt (6 tests)</td><td class="pass">6 PASS</td><td>Token extraction, excerpt centering, truncation</td></tr>
+<tr><td>Tests: test_retrieval hybrid search (3 tests)</td><td class="pass">3 PASS</td><td>Mocked vector+keyword+fallback retrieval</td></tr>
+<tr><td>SQLAlchemy models import</td><td class="pass">PASS</td><td>All 11 tables detected in metadata</td></tr>
+<tr><td>Alembic migration script</td><td class="pass">PASS</td><td>1 migration found, compiles correctly</td></tr>
+<tr><td>PostgreSQL connection</td><td class="warn">REQUIRES DATABASE_URL</td><td>Fails loudly and clearly when DATABASE_URL not set — correct behavior</td></tr>
+<tr><td>Embedding model</td><td class="pass">PASS (lazy-loaded)</td><td>sentence-transformers/all-MiniLM-L6-v2, loaded on first use</td></tr>
+<tr><td>LLM (IBM/Groq)</td><td class="warn">REQUIRES API KEYS</td><td>Correctly reports disabled; falls back to evidence-only mode</td></tr>
+<tr><td>Guide generation (static fallback)</td><td class="pass">PASS</td><td>Works without LLM, produces markdown</td></tr>
+<tr><td>Chat (evidence-only fallback)</td><td class="pass">PASS</td><td>Works without LLM using hybrid search</td></tr>
+<tr><td>Guide download (Markdown)</td><td class="pass">IMPLEMENTED</td><td>GET /api/repositories/{id}/guide/download?format=markdown</td></tr>
+<tr><td>Guide download (PDF)</td><td class="pass">IMPLEMENTED</td><td>GET /api/repositories/{id}/guide/download?format=pdf (fpdf2)</td></tr>
+</table>
+
+<p><strong>Total tests: 34 — 34 PASS / 0 FAIL</strong></p>
+
+<h2>Files Created</h2>
+<table>
+<tr><th>File</th><th>Purpose</th></tr>
+<tr><td><code>backend/models.py</code></td><td>All 11 SQLAlchemy ORM models (Repository, Job, File, Symbol, Relationship, APIRoute, Chunk, Embedding, Guide, Conversation, Message)</td></tr>
+<tr><td><code>backend/embeddings.py</code></td><td>Lazy-loaded SentenceTransformer embedding pipeline; embed_texts(), embed_query()</td></tr>
+<tr><td><code>backend/llm.py</code></td><td>LLM provider abstraction: IBMProvider, GroqProvider, FallbackLLM (IBM → Groq)</td></tr>
+<tr><td><code>backend/guide_generator.py</code></td><td>LLM-based guide generation with static fallback; builds structured context from analysis</td></tr>
+<tr><td><code>backend/chunker.py</code></td><td>Semantic chunker: by-symbol, by-heading (docs), sliding window fallback</td></tr>
+<tr><td><code>backend/parsers/__init__.py</code></td><td>Parser package</td></tr>
+<tr><td><code>backend/parsers/base.py</code></td><td>ParsedSymbol, ParsedImport, ParsedRoute, ParseResult dataclasses; BaseParser interface</td></tr>
+<tr><td><code>backend/parsers/python_parser.py</code></td><td>Full AST-based Python parser (symbols, imports, calls, routes)</td></tr>
+<tr><td><code>backend/parsers/js_parser.py</code></td><td>Regex-based JS/TS/JSX/TSX/Vue/Svelte parser (symbols, imports, routes, Next.js pages)</td></tr>
+<tr><td><code>backend/parsers/generic_parser.py</code></td><td>SQL (CREATE TABLE/VIEW/...) and Markdown heading parser; config fallback</td></tr>
+<tr><td><code>backend/parsers/registry.py</code></td><td>get_parser() / parse_file() dispatch by extension</td></tr>
+<tr><td><code>alembic.ini</code></td><td>Alembic configuration at project root</td></tr>
+<tr><td><code>alembic/env.py</code></td><td>Alembic env reading DATABASE_URL, importing Base.metadata</td></tr>
+<tr><td><code>alembic/script.py.mako</code></td><td>Migration template</td></tr>
+<tr><td><code>alembic/versions/001_initial_postgres_schema.py</code></td><td>Hand-written initial migration: all 11 tables, pgvector extension, IVFFlat cosine index</td></tr>
+<tr><td><code>.env.example</code></td><td>All required and optional environment variables with descriptions</td></tr>
+</table>
+
+<h2>Files Modified</h2>
+<table>
+<tr><th>File</th><th>Change</th></tr>
+<tr><td><code>backend/config.py</code></td><td>Replaced OpenAI config with DATABASE_URL, IBM_API_KEY, GROQ_API_KEY, EMBEDDING_MODEL settings</td></tr>
+<tr><td><code>backend/database.py</code></td><td>Full rewrite: SQLite → PostgreSQL + SQLAlchemy engine, get_session() contextmanager, check_health(), mark_stale_jobs()</td></tr>
+<tr><td><code>backend/analyzer.py</code></td><td>Replaced inline Python/JS parsing with parser registry; added create_chunks() function</td></tr>
+<tr><td><code>backend/retrieval.py</code></td><td>Full rewrite: lexical SQLite → hybrid RAG (vector_search, keyword_search, symbol_search, relationship expansion)</td></tr>
+<tr><td><code>backend/service.py</code></td><td>Full rewrite: SQLite → SQLAlchemy ORM; added embedding storage, LLM guide gen, guide_markdown(), guide_pdf()</td></tr>
+<tr><td><code>backend/server.py</code></td><td>Added /api/repositories/{id}/guide/download endpoint (markdown+pdf); db health in /api/health</td></tr>
+<tr><td><code>frontend/app.js</code></td><td>LLM guide rendering with markdown, download buttons, RAG stats, improved markdownLite()</td></tr>
+<tr><td><code>frontend/styles.css</code></td><td>Added guide download bar, guide-md-body rendering styles</td></tr>
+<tr><td><code>tests/test_retrieval.py</code></td><td>Rewritten for hybrid RAG; tokenizer, excerpt, mock-based vector/keyword tests</td></tr>
+<tr><td><code>tests/test_service.py</code></td><td>Rewritten for PostgreSQL architecture; analysis pipeline, parsers, chunker, guide, LLM, chat tests</td></tr>
+<tr><td><code>pyproject.toml</code></td><td>Added 9 dependencies; bumped version to 0.2.0</td></tr>
+</table>
+
+<h2>Database Schema</h2>
+<div class="section">
+<p>11 tables in PostgreSQL with pgvector extension:</p>
+<table>
+<tr><th>Table</th><th>Key Columns</th></tr>
+<tr><td><code>repositories</code></td><td>id, owner, name, url (unique), status, default_branch, error, timestamps</td></tr>
+<tr><td><code>jobs</code></td><td>id, repository_id, status, started_at, finished_at, files_scanned, symbols_extracted, chunks_created</td></tr>
+<tr><td><code>files</code></td><td>id, repository_id, path, kind, language, size, sha256, line_count, content, extra_meta (JSONB)</td></tr>
+<tr><td><code>symbols</code></td><td>id, repository_id, file_id, symbol_key, name, qualified_name, kind, start_line, end_line, signature, docstring</td></tr>
+<tr><td><code>relationships</code></td><td>id, repository_id, source_type/key, target_type/key, relation, evidence, line_number</td></tr>
+<tr><td><code>api_routes</code></td><td>id, repository_id, method, path, file_path, handler, line_number, framework</td></tr>
+<tr><td><code>chunks</code></td><td>id, repository_id, file_id, chunk_text, chunk_type, file_path, start_line, end_line, language, symbol_name, extra_meta (JSONB)</td></tr>
+<tr><td><code>embeddings</code></td><td>id, chunk_id (unique), repository_id, embedding vector(384) — IVFFlat cosine index</td></tr>
+<tr><td><code>guides</code></td><td>id, repository_id (unique), content_md, content_json (JSONB), generated_at</td></tr>
+<tr><td><code>conversations</code></td><td>id, repository_id, created_at, updated_at</td></tr>
+<tr><td><code>messages</code></td><td>id, conversation_id, role, content, evidence (JSONB), created_at</td></tr>
+</table>
+</div>
+
+<h2>RAG Architecture</h2>
+<pre>
+GitHub Repository
+      ↓
+clone_repository() — git clone, read-only flag fix (Windows)
+      ↓
+analyze_repository() — reads files, parser registry per language
+      ↓
+create_chunks() — semantic chunking by symbol/heading/window
+      ↓
+embed_texts() — sentence-transformers/all-MiniLM-L6-v2 (dim=384)
+      ↓
+PostgreSQL + pgvector — chunks table + embeddings table (vector(384))
+      ↓
+generate_llm_guide() — structured context → IBM LLM → Groq fallback
+      ↓
+Guide stored as Markdown in guides.content_md
+
+User Question
+      ↓
+embed_query() → pgvector cosine similarity search (vector_search)
+      ↓ + ILIKE keyword search over chunks (keyword_search)
+      ↓ + ORM symbol name search (symbol_search)
+      ↓ + relationship expansion (import/call graph)
+      ↓
+Ranked evidence items (top_k=8 default)
+      ↓
+IBM LLM → Groq fallback → evidence-only fallback
+      ↓
+Grounded answer with source citations [path:line-line]
+</pre>
+
+<h2>Supported Languages</h2>
+<span class="tag">Python</span><span class="tag">JavaScript</span><span class="tag">TypeScript</span><span class="tag">JSX/TSX</span><span class="tag">Vue</span><span class="tag">Svelte</span><span class="tag">SQL</span><span class="tag">Markdown</span><span class="tag">Java</span><span class="tag">Go</span><span class="tag">Rust</span><span class="tag">Ruby</span><span class="tag">PHP</span><span class="tag">C/C++</span><span class="tag">C#</span><span class="tag">Kotlin</span><span class="tag">Swift</span><span class="tag">HTML</span><span class="tag">CSS/SCSS</span><span class="tag">YAML/TOML/JSON</span><span class="tag">Shell</span><span class="tag">Terraform</span><span class="tag">Dockerfile</span>
+<p class="muted" style="font-size:12px">Deep AST parsing: Python, SQL, Markdown. Regex-based: JS/TS family. All others: indexed for keyword/vector retrieval.</p>
+
+<h2>LLM Provider Configuration</h2>
+<table>
+<tr><th>Variable</th><th>Provider</th><th>Role</th></tr>
+<tr><td><code>IBM_API_KEY</code></td><td>IBM watsonx / IBM-compatible API</td><td>Primary LLM (guide gen + chat)</td></tr>
+<tr><td><code>IBM_BASE_URL</code></td><td>Default: us-south.ml.cloud.ibm.com</td><td>Primary endpoint</td></tr>
+<tr><td><code>IBM_MODEL</code></td><td>Default: ibm/granite-3-8b-instruct</td><td>Primary model</td></tr>
+<tr><td><code>GROQ_API_KEY</code></td><td>Groq (OpenAI-compatible)</td><td>Fallback LLM</td></tr>
+<tr><td><code>GROQ_MODEL</code></td><td>Default: llama3-70b-8192</td><td>Fallback model</td></tr>
+</table>
+
+<h2>API Endpoints</h2>
+<table>
+<tr><th>Method</th><th>Path</th><th>Description</th></tr>
+<tr><td>GET</td><td>/api/health</td><td>Health check with llm_enabled + db_healthy flags</td></tr>
+<tr><td>GET</td><td>/api/repositories</td><td>List all repositories</td></tr>
+<tr><td>POST</td><td>/api/repositories</td><td>Register and queue a GitHub repository</td></tr>
+<tr><td>POST</td><td>/api/repositories/validate</td><td>Validate a GitHub URL</td></tr>
+<tr><td>GET</td><td>/api/repositories/{id}</td><td>Repository status + latest job</td></tr>
+<tr><td>POST</td><td>/api/repositories/{id}/analyze</td><td>Re-trigger analysis</td></tr>
+<tr><td>GET</td><td>/api/repositories/{id}/overview</td><td>Counts, languages, symbols, README excerpt</td></tr>
+<tr><td>GET</td><td>/api/repositories/{id}/guide</td><td>Onboarding guide (JSON + content_md)</td></tr>
+<tr><td><strong>GET</strong></td><td><strong>/api/repositories/{id}/guide/download?format=markdown</strong></td><td><strong>NEW: Download guide as .md</strong></td></tr>
+<tr><td><strong>GET</strong></td><td><strong>/api/repositories/{id}/guide/download?format=pdf</strong></td><td><strong>NEW: Download guide as PDF</strong></td></tr>
+<tr><td>GET</td><td>/api/repositories/{id}/files</td><td>File list</td></tr>
+<tr><td>GET</td><td>/api/repositories/{id}/files/content?path=</td><td>File detail with symbols</td></tr>
+<tr><td>GET</td><td>/api/repositories/{id}/symbols</td><td>Symbol search</td></tr>
+<tr><td>GET</td><td>/api/repositories/{id}/apis</td><td>API routes</td></tr>
+<tr><td>GET</td><td>/api/repositories/{id}/search?query=</td><td>Hybrid RAG search</td></tr>
+<tr><td>POST</td><td>/api/repositories/{id}/chat</td><td>RAG chatbot with conversation context</td></tr>
+<tr><td>GET</td><td>/api/repositories/{id}/conversations</td><td>List conversations</td></tr>
+<tr><td>GET</td><td>/api/repositories/{id}/conversations/{conv_id}</td><td>Conversation history</td></tr>
+</table>
+
+<h2>Commands to Run the Upgraded System</h2>
+<pre>
+# 1. Install dependencies
+pip install sqlalchemy alembic psycopg2-binary pgvector sentence-transformers fpdf2 torch
+
+# 2. Set required environment variables
+set DATABASE_URL=postgresql://postgres:&lt;password&gt;@db.&lt;project&gt;.supabase.co:5432/postgres
+set IBM_API_KEY=your-ibm-api-key          # optional but recommended
+set GROQ_API_KEY=your-groq-api-key        # optional fallback
+
+# 3. Apply database migrations (first-time setup)
+alembic upgrade head
+
+# 4. Start the application
+python -m backend.main
+
+# 5. Run tests (no DATABASE_URL needed)
+python -m unittest tests.test_analyzer tests.test_github tests.test_service tests.test_server
+
+# Optional: downgrade and re-upgrade to test migration
+alembic downgrade -1
+alembic upgrade head
+</pre>
+
+<h2>Known Limitations</h2>
+<ul>
+<li>Deep AST parsing is currently implemented for Python, SQL, and Markdown. Java, Go, Rust, C/C++ etc. are indexed (files + content) but not deeply parsed — they use the generic parser and sliding-window chunking.</li>
+<li>The IVFFlat index requires at least ~1000 vectors for efficient use; small repositories use sequential scan automatically.</li>
+<li>Guide generation with LLM may hit context length limits for very large repositories; the guide_generator.py truncates context to fit.</li>
+<li>Embedding model download (~90MB) happens on first use; subsequent runs use the cached model.</li>
+<li>Integration tests against a live PostgreSQL instance require a valid DATABASE_URL; the test suite uses mocks for all DB-dependent tests.</li>
+<li>PDF generation uses fpdf2 with latin-1 encoding — non-latin characters are replaced. For full Unicode PDF support, add a Unicode font to the FPDF instance.</li>
+</ul>
+
+<footer>Made with IBM Bob</footer>
+</body>
+</html>

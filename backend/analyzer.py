@@ -14,6 +14,8 @@ from collections import Counter, defaultdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from backend.parsers.registry import parse_file
+
 
 LOGGER = logging.getLogger("onboard.analyzer")
 
@@ -279,29 +281,22 @@ def analyze_repository(root: Path) -> dict[str, Any]:
     for entry in files:
         path, content = entry["path"], entry["content"]
         suffix = PurePosixPath(path).suffix.lower()
-        extracted: list[dict[str, Any]] = []
-        imports: list[dict[str, Any]] = []
-        calls: list[dict[str, Any]] = []
-        if suffix in {".py", ".pyi"}:
-            extracted, imports, calls = _python_symbols(path, content)
-        elif suffix in {".js", ".jsx", ".mjs", ".cjs", ".ts", ".tsx", ".vue", ".svelte"}:
-            for match in JS_SYMBOL_RE.finditer(content):
-                groups = match.groups()
-                kind = groups[0] or "function"
-                name = groups[1] or groups[2]
-                line = content.count("\n", 0, match.start()) + 1
-                extracted.append({
-                    "file_path": path, "name": name, "qualified_name": name, "kind": kind.lower(),
-                    "start_line": line, "end_line": line, "signature": name, "docstring": "",
-                    "symbol_key": f"{path}::{name}:{line}",
-                })
-            for match in IMPORT_FROM_RE.finditer(content):
-                imports.append({"module": match.group(1), "line_number": content.count("\n", 0, match.start()) + 1, "evidence": match.group(0).strip()[:200]})
-            for match in REQUIRE_RE.finditer(content):
-                imports.append({"module": match.group(1), "line_number": content.count("\n", 0, match.start()) + 1, "evidence": match.group(0)[:200]})
-            for match in JS_ROUTE_RE.finditer(content):
-                method = (match.group(1) or match.group(3) or "get").upper()
-                routes.append({"method": method, "path": match.group(4), "file_path": path, "handler": "route handler (text match)", "line_number": content.count("\n", 0, match.start()) + 1})
+        parsed = parse_file(path, content)
+        extracted: list[dict[str, Any]] = [
+            {
+                "file_path": sym.file_path, "name": sym.name, "qualified_name": sym.qualified_name,
+                "kind": sym.kind, "start_line": sym.start_line, "end_line": sym.end_line,
+                "signature": sym.signature, "docstring": sym.docstring, "symbol_key": sym.symbol_key,
+            }
+            for sym in parsed.symbols
+        ]
+        imports: list[dict[str, Any]] = [
+            {"module": imp.module, "line_number": imp.line_number, "evidence": imp.evidence}
+            for imp in parsed.imports
+        ]
+        calls: list[dict[str, Any]] = parsed.calls
+        for route in parsed.routes:
+            routes.append({"method": route.method, "path": route.path, "file_path": path, "handler": route.handler, "line_number": route.line_number})
         symbols.extend(extracted)
         call_candidates.extend(calls)
         for symbol in extracted:
@@ -469,3 +464,49 @@ def generate_guide(analysis: dict[str, Any], repository: dict[str, Any]) -> dict
             "Environment variable names are collected from text and may include false positives. Values are redacted.",
         ],
     }
+
+
+def create_chunks(files: list[dict], symbols: list[dict]) -> list[dict]:
+    """Create semantic chunks from analyzed files and symbols, returning dicts for DB storage."""
+    from backend.chunker import chunk_file, Chunk
+    from backend.parsers.base import ParsedSymbol
+
+    # Build symbol lookup by file path
+    symbols_by_path: dict[str, list[ParsedSymbol]] = {}
+    for sym in symbols:
+        path = sym["file_path"]
+        parsed_sym = ParsedSymbol(
+            name=sym["name"],
+            qualified_name=sym["qualified_name"],
+            kind=sym["kind"],
+            start_line=sym["start_line"],
+            end_line=sym["end_line"],
+            signature=sym.get("signature", ""),
+            docstring=sym.get("docstring", ""),
+            symbol_key=sym.get("symbol_key", ""),
+            file_path=path,
+        )
+        symbols_by_path.setdefault(path, []).append(parsed_sym)
+
+    all_chunks: list[dict] = []
+    for entry in files:
+        path = entry["path"]
+        content = entry["content"]
+        kind = entry.get("kind", "source")
+        file_syms = symbols_by_path.get(path, [])
+        try:
+            file_chunks = chunk_file(path, content, file_syms, kind)
+        except Exception:
+            continue
+        for chunk in file_chunks:
+            all_chunks.append({
+                "file_path": path,
+                "chunk_text": chunk.chunk_text,
+                "chunk_type": chunk.chunk_type,
+                "start_line": chunk.start_line,
+                "end_line": chunk.end_line,
+                "language": chunk.language,
+                "symbol_name": chunk.symbol_name,
+                "extra_meta": chunk.extra_meta,
+            })
+    return all_chunks

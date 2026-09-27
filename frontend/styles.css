@@ -1141,3 +1141,71 @@ button {
 .chat-recent-heading {
   margin-top: 24px;
 }
+
+.guide-download-bar {
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+  padding:10px 14px;
+  background:#151e1d;
+  border:1px solid #27312e;
+  border-radius:8px;
+  margin-bottom:12px
+}
+.guide-generated-note {
+  font-size:11px;
+  color:#84928d
+}
+.guide-download-buttons {
+  display:flex;
+  gap:8px
+}
+.guide-content-full {
+  grid-column:1/-1
+}
+.guide-md-body h1 {
+  font:700 20px var(--display);
+  margin:18px 0 8px;
+  color:#b5e8c9
+}
+.guide-md-body h2 {
+  font:600 16px var(--display);
+  margin:14px 0 6px;
+  color:#d7e9dc;
+  border-bottom:1px solid #27312e;
+  padding-bottom:4px
+}
+.guide-md-body h3 {
+  font:600 13px var(--display);
+  margin:10px 0 4px;
+  color:#c8ddd1
+}
+.guide-md-body p {
+  font-size:12px;
+  color:#a5b2aa;
+  line-height:1.8;
+  margin:4px 0
+}
+.guide-md-body li {
+  font-size:12px;
+  color:#a5b2aa;
+  line-height:1.8
+}
+.guide-md-body code {
+  font-family:var(--mono);
+  font-size:11px;
+  background:#101615;
+  padding:1px 5px;
+  border-radius:3px;
+  color:#87d6a7
+}
+.guide-md-body pre {
+  background:#101615;
+  border:1px solid #27312e;
+  border-radius:6px;
+  padding:12px;
+  overflow:auto;
+  font-size:11px;
+  color:#c8ddd1;
+  margin:8px 0
+}
