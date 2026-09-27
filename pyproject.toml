@@ -3,6 +3,7 @@ name = "onboard-agent"
 version = "0.2.0"
 description = "RAG-based Developer Onboarding and Codebase Intelligence Agent"
 requires-python = ">=3.11"
+
 dependencies = [
     "sqlalchemy>=2.0",
     "alembic>=1.13",
@@ -13,6 +14,7 @@ dependencies = [
     "sentence-transformers>=2.7",
     "groq>=0.8",
     "fpdf2>=2.7",
+    "python-dotenv>=1.0",
 ]
 
 [project.scripts]
@@ -20,3 +22,6 @@ onboard-agent = "backend.main:main"
 
 [tool.unittest]
 start-directory = "tests"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
