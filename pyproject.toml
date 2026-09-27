@@ -1,0 +1,12 @@
+[project]
+name = "onboard-agent"
+version = "0.1.0"
+description = "Local repository onboarding and code intelligence MVP"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+onboard-agent = "backend.main:main"
+
+[tool.unittest]
+start-directory = "tests"

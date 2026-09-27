@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#101516" />
+    <title>Onboard Agent · Codebase mentor</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <a class="brand" href="/" aria-label="Onboard Agent home"><span class="brand-mark">O</span><span>onboard<span class="brand-muted">.agent</span></span></a>
+        <div class="workspace-label">WORKSPACE</div>
+        <label class="repo-label" for="repoSelect">Repository</label>
+        <select id="repoSelect" class="repo-select" aria-label="Choose a repository"><option value="">No repository yet</option></select>
+        <button class="add-repo" id="showAddRepo"><span>＋</span> Add repository</button>
+        <div class="nav-label">EXPLORE</div>
+        <nav class="main-nav" aria-label="Repository sections">
+          <button class="nav-item active" data-view="overview"><span class="nav-icon">◫</span> Overview</button>
+          <button class="nav-item" data-view="guide"><span class="nav-icon">▤</span> Onboarding guide</button>
+          <button class="nav-item" data-view="files"><span class="nav-icon">⌘</span> Files & symbols</button>
+          <button class="nav-item" data-view="apis"><span class="nav-icon">⇄</span> API routes</button>
+          <button class="nav-item" data-view="chat"><span class="nav-icon">✳</span> Ask the codebase</button>
+        </nav>
+        <div class="sidebar-bottom"><span class="status-dot"></span><span id="serviceStatus">Checking local service…</span></div>
+      </aside>
+
+      <main class="main-area">
+        <header class="topbar">
+          <div class="breadcrumb"><span>Workspace</span><span class="crumb-sep">/</span><strong id="crumbRepo">Select a repository</strong></div>
+          <div class="top-actions"><span class="local-badge"><span></span> Local workspace</span><button class="avatar" title="Onboard Agent">OA</button></div>
+        </header>
+
+        <section id="emptyState" class="empty-state hidden">
+          <div class="hero-orbit"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="hero-glyph">⌘</div><span class="orbit-node node-a">{ }</span><span class="orbit-node node-b">↗</span><span class="orbit-node node-c">#</span></div>
+          <div class="eyebrow">YOUR REPOSITORY, UNDERSTOOD</div>
+          <h1>Make a new codebase<br /><span>feel familiar.</span></h1>
+          <p class="hero-copy">Map the architecture, find the code behind a feature, and get grounded answers with source evidence.</p>
+          <button class="primary-button hero-cta" id="heroAddRepo">Analyze a repository <span>→</span></button>
+          <div class="trust-note">Public GitHub repositories · Source code is never executed</div>
+        </section>
+
+        <section id="repoFormPanel" class="repo-form-panel hidden">
+          <div class="form-card">
+            <button class="close-button" id="closeRepoForm" aria-label="Close">×</button>
+            <div class="eyebrow">START A NEW WORKSPACE</div>
+            <h2>Bring a codebase into focus.</h2>
+            <p>Paste a public GitHub repository URL. We’ll map its files, symbols, APIs, and local imports.</p>
+            <form id="repoForm">
+              <label for="repoUrl">GitHub repository URL</label>
+              <div class="url-input-wrap"><span>↗</span><input id="repoUrl" type="url" placeholder="https://github.com/owner/repository" required maxlength="500" autocomplete="url" /><button class="primary-button" type="submit">Analyze repository <span>→</span></button></div>
+              <div id="formMessage" class="form-message" role="status"></div>
+              <div class="form-footnote"><span>◈</span> Private repositories are not supported. Repository code is treated as untrusted input and never executed.</div>
+            </form>
+          </div>
+        </section>
+
+        <section id="workspace" class="workspace hidden">
+          <div class="repo-heading">
+            <div><div class="eyebrow" id="repoOwner">REPOSITORY</div><h1 id="repoTitle">Repository</h1><div class="repo-meta"><a id="repoLink" href="#" target="_blank" rel="noreferrer">GitHub repository ↗</a><span class="meta-divider">·</span><span id="repoBranch">default branch</span></div></div>
+            <button class="secondary-button" id="reanalyzeButton">↻ <span>Re-analyze</span></button>
+          </div>
+          <div id="jobBanner" class="job-banner hidden"><span class="spinner"></span><div><strong id="jobTitle">Analysis in progress</strong><span id="jobDetail">Repository files are being scanned.</span></div></div>
+          <div id="errorBanner" class="error-banner hidden"></div>
+          <div id="viewContent"></div>
+        </section>
+      </main>
+    </div>
+    <div id="toast" class="toast" role="status"></div>
+    <script src="/app.js" defer></script>
+  </body>
+</html>
